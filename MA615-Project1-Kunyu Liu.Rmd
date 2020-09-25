@@ -1,0 +1,250 @@
+---
+title: "MA615_Project1_Kunyu Liu"
+author: "Kunyu Liu"
+date: "9/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(ggplot2,lubridate,stringr,tidyverse,ggpubr,knitr)
+BUOY_DATA = load('Buoy.Rdata')
+```
+
+***
+
+# Abstract
+
+>Statistical learning methods were applied to global warming problem, which is an issue causing many types of disasters, including storms, heat waves, floods, and droughts. Thus, learning factors that effect global warming is important. A variety of learning techniques were explored and validated in our project, and we find several elements that effect the global warming.
+
+***
+
+# Introduction
+Global warming is a important issue nowadays, and we want to find evidence of global warming in the data collected by a single weather buoy in the NOAA National Data Buoy Center. The Buoy data set contains data from 1987-2016, and uses many variables to calculate the temperature, such as wind direction, wind speed and significant wave height and so on. In all these variables which can effect global warming, we think the direct evidence is temperature, so we use WTMP and ATMP for data analysis and determine the factors for global warming.
+
+To construct a system to test factors that effect global warming, we divided our projects into four parts: * Read data from URLs of NOAA and combine into a single data.frame.
+* Transform separated time variables into one and prepare for analysis.
+* Perform data analysis with WTMP *(Water Temperature)* 
+* Perform data analysis with ATMP *(Air Temperature)*
+
+***
+
+# Methods
+
+## Data
+First, we read data from NOOA and solve format issues as well.
+
+```{r}
+#make URLs
+url1 = "http://www.ndbc.noaa.gov/view_text_file.php?filename=mlrf1h"
+url2 = ".txt.gz&dir=data/historical/stdmet/"
+years = c(1987:2016)
+urls=paste0(url1,years,url2)
+Dnames=paste0('D',years)
+for(i in years){assign(Dnames[i-years[1]+1],read_table2(urls[i-years[1]+1]))}
+```
+
+Next, We need to combine the data, because there are 30 data frames don't have the same dimension, so we need to do the transformation. Here are transformations we did: From year 2000 to year 2016, we delete an additional variable of 'TIDE'; From year 2005 to year 2016, we delete an additional variable of 'mm'; From year 2007 to year 2016, we delete first row of units;  From year 1987 to year 1999, transfer the Year from 'XX' to '19XX'; Create and combine to form final data set Buoy. After doing these steps, we get a data frame with 246,245 observations and 16 variables.
+
+```{r}
+coln = colnames(get(Dnames[1]))
+
+for(i in years){
+  D=get(Dnames[i-years[1]+1])
+  # From Y2000 to Y2016, delete an additional variable of 'TIDE'
+  if(i %in% 2000:2016){D=select(D,-TIDE)}
+  # From Y2005 to Y2016, delete an additional variable of 'mm'
+  if(i %in% 2005:2016){D=select(D,-mm)}
+  # From Y2007 to Y2016, delete first row of units
+  if(i %in% 2007:2016){D=D[-1,]}
+  # Check and unify col names and set data type as 'numeric'
+  if(ncol(D)==length(coln)){colnames(D)=coln}
+  D=sapply(D, as.numeric)
+  # From Y1987 to Y1999, transfer the Year from 'XX' to '19XX'
+  D[,1][D[,1]<100]=D[,1][D[,1]<100]+1900
+  # Create and combine to form final data set Buoy
+  if(i==years[1]){Buoy=D}
+  else{Buoy=rbind.data.frame(Buoy,D)}
+}
+
+save(Buoy,file=BUOY_DATA)
+```
+
+Then, we do the time transformation with `make_datetime()`.
+
+```{r}
+
+Buoy$DT=make_datetime(Buoy$YY,Buoy$MM,Buoy$DD,Buoy$hh)
+Buoy=Buoy[,-c(1:4)]
+kable(Buoy[1:5, ],caption="Buoy")
+```
+
+As for the last step to prepare data and move to the modeling part, we need to remove NA values and set some parameters for analysis. In this step, we create Bouy_W and Buoy_A data frames without NA values, one for WTMP and the other for ATMP to support our further analysis. Also, to store annual average WTMP and ATMP data, we set Y_W and Y_A; to store monthly average WTMP and ATMP data, we set M_W and M_A.
+
+```{r}
+#Remove Display data
+Buoy_W=Buoy[Buoy$WTMP<99,]
+Buoy_A=Buoy[Buoy$ATMP<99,]
+#Set for analysis
+month=c('Jan','Feb','Mar','Apr','May','Jun',
+        'Jul','Aug','Sep','Oct','Nov','Dec')
+Y_W=0
+Y_A=0
+M_W=0
+M_A=0
+```
+
+## Modeling: Data analysis with WTMP
+
+In the modeling part, we will do the data analysis with WTMP and ATMP. First, we do the WTMP analysis. We use for loop to calaulate annual mean temperature from 1988-2015, we use these 28 years data because data of 1988 only contains data collected in winter and data of 2016 only has about 75% data points compared to other years. Also, we do a simple linear regression, variable TMP for response, and time for independent variable.
+
+```{r}
+#Loop for annual mean temperature calculation
+for(i in 1988:2015){
+  Y_W[i-1987]=mean(Buoy_W$WTMP
+                   [date(Buoy_W$DT)>=make_date(i)&
+                       date(Buoy_W$DT)<make_date(i+1)]
+                   )
+}
+
+
+D_W=data.frame(Time=1988:2015,TMP=Y_W)
+R_W=lm(TMP~Time,data=D_W)
+print(R_W)
+```
+
+As the above coefficient for time is so small, in order to see a obvious change, we improve our model by looking monthly average temperture. We use two for loop, outer loop for 12 months calculation and 12 plots, inner loop for annual mean temperature of each month calculation. And also do a regression.
+```{r}
+P_WM_name=str_c('P_W',1:12,sep='')
+#Outer loop for 12 months calculation and 12 plots
+for(j in 1:12){
+  #Inner loop for annual mean temperature of each month calculation
+  for(i in 1988:2015){
+    M_W[i-1987]=mean(Buoy_W$WTMP
+                     [date(Buoy_W$DT)>=
+                         make_date(i,j)&
+                         date(Buoy_W$DT)<
+                         make_date(ifelse(j==12,i+1,i),
+                                   ifelse(j==12,1,j+1))])
+  }
+  ##Do regression and present results of each month
+  D_W=data.frame(Time=1988:2015,TMP=M_W)
+  assign(P_WM_name[j],
+         ggplot(D_W,aes(Time,TMP))+
+         geom_point()+
+         geom_smooth(method="lm",formula=y~x)+
+         labs(title=month[j],x="year",y="Mean WTMP"))
+}
+
+```
+
+## Modeling: Data analysis with ATMP
+
+Next, we do the analysis with ATMP, we do a for loop for annual mean temperature as we did for WTMP. We do a simple linear regression as well.
+
+```{r}
+#Loop for annual mean temperature calculation
+for(i in 1988:2015){
+  Y_A[i-1987]=mean(Buoy_A$ATMP
+                   [date(Buoy_A$DT)>=make_date(i)&
+                       date(Buoy_A$DT)<make_date(i+1)])
+}
+
+D_A=data.frame(Time=1988:2015,TMP=Y_A)
+R_A=lm(TMP~Time,data=D_A)
+print(R_A)
+```
+
+As we did in the WTMP, in ATMP, the coefficient for time is also small, in order to see a obvious change, we improve our model by looking monthly average temperture. We use two for loop, outer loop for 12 months calculation and 12 plots, inner loop for annual mean temperature of each month calculation. And also do a regression.
+
+```{r}
+P_AM_name=str_c('P_A',1:12,sep='')
+#Outer loop for 12 months calculation and 12 plots
+for(j in 1:12){
+  #Inner loop for annual mean temperature of each month calculation
+  for(i in 1988:2015){
+    M_A[i-1987]=mean(Buoy_A$ATMP
+                     [date(Buoy_A$DT)>=
+                         make_date(i,j)&
+                         date(Buoy_A$DT)<
+                         make_date(ifelse(j==12,i+1,i),
+                                   ifelse(j==12,1,j+1))])
+  }
+  ##Do regression and present results of each month
+  D_A=data.frame(Time=1988:2015,TMP=M_A)
+  assign(P_AM_name[j],
+         ggplot(D_A,aes(Time,TMP))+
+         geom_point()+
+         geom_smooth(method="lm",formula=y~x)+
+         labs(title=month[j],x="year",y="Mean ATMP"))
+}
+```
+
+***
+
+# Results 
+## Results for WTMP
+
+```{r}
+#plot of annual results for WTMP
+P_W=ggplot(D_W,aes(Time,TMP))+
+  geom_point()+
+  geom_smooth(method="lm",formula=y~x)+
+  labs(title='Yearly Trend of Water Temperature', 
+        x="year", y='Yearly Average Water Temperature')
+P_W
+```
+From the yearly trend of water temperature plot, we can see a slightly change between year and annual average water temperature, and these two variables have a slightly positive relationship.
+
+```{r}
+ggarrange(P_W1,P_W2,P_W3,P_W4,P_W5,P_W6,ncol=3,nrow=2)
+ggarrange(P_W7,P_W8,P_W9,P_W10,P_W11,P_W12,ncol=3,nrow=2)
+```
+
+From the monthly results of WTMP, except January, February, July and November, other 8 months all display upward trends in water temperature as an indicator of global warming. What is more, we find the plots show an downward trend in winter time and upward trend in summer time, thus, causing large range of average temperature.
+
+## Results for ATMP
+```{r}
+#plot of annual results for ATMP
+P_A=ggplot(D_A,aes(Time,TMP))+
+  geom_point()+
+  geom_smooth(method="lm",formula=y~x)+
+  labs(title='Yearly Trend of Air Temperature', 
+        x="year", y='Yearly Average Air Temperature')
+P_A
+```
+
+From the yearly trend of air temperature plot, we can see a slightly change between year and annual average air temperature, and these two variables have a slightly positive relationship.
+
+```{r}
+#Arrange 12 plots(ATMP)
+ggarrange(P_A1,P_A2,P_A3,P_A4,P_A5,P_A6,ncol=3,nrow=2)
+ggarrange(P_A7,P_A8,P_A9,P_A10,P_A11,P_A12,ncol=3,nrow=2)
+```
+
+From the monthly results of ATMP, the trend is much more clearly. Except January, February, March and November, other 8 months all display upward trends in air temperature as an indicator of global warming. What is more, we find the plots show an downward trend in winter time and upward trend in summer time, thus, causing large range of average temperature.
+
+***
+
+# Discussion
+
+In sum, we come to the conclusion that water temperature and air temperature both have influence on global warming: Both water temperature and air temperature increase slightly each year; As monthly trends, most months increases in temperature; downward trend in winter time and upward trend in summer time cause large range of average temperature. 
+
+
+***
+
+# Reference
+
+[National Data Buoy Center](https://www.ndbc.noaa.gov/station_page.php?station=44013)
+
+
+
+
+
+
+
+
+
+
+
+
